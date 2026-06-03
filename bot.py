@@ -1,4 +1,3 @@
-
 import logging
 import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -9,7 +8,8 @@ from telegram.ext import (
 from database import (
     init_db, get_tasks, get_task, get_members, get_phases,
     get_statuses, get_dashboard, update_task_status, add_task,
-    update_task_notes, update_task_doc, delete_task
+    update_task_notes, update_task_doc, delete_task,
+    get_notify_ids, set_member_tg_id
 )
 from finance_bot import finance_menu, finance_button_handler, get_finance_conversations
 
@@ -17,6 +17,43 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 TOKEN = os.getenv("BOT_TOKEN", "6819753947:AAHa366GI99NYAqsm6L271UqQlYdw9Y8y8Q")
+
+# ════════════════════════════════════════════════════════════════
+# نوتیفیکیشن
+# ════════════════════════════════════════════════════════════════
+async def notify_all(ctx: ContextTypes.DEFAULT_TYPE, text: str, exclude_id: int = None):
+    """پیام رو به همه اعضایی که tg_id دارن می‌فرسته (غیر از فرستنده)."""
+    for tg_id in get_notify_ids():
+        if exclude_id and tg_id == exclude_id:
+            continue
+        try:
+            await ctx.bot.send_message(chat_id=tg_id, text=text, parse_mode="Markdown")
+        except Exception as e:
+            logger.warning(f"notify failed for {tg_id}: {e}")
+
+
+async def register_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """هر عضو با /register باید این دستور رو بزنه تا tg_id ش ثبت بشه."""
+    tg_id = update.effective_user.id
+    members = get_members()
+    kb = [
+        [InlineKeyboardButton(f"👤 {m['name']}", callback_data=f"reg:{m['id']}")]
+        for m in members
+    ]
+    await update.message.reply_text(
+        "اسمت رو انتخاب کن تا نوتیف‌ها برات فعال بشه:",
+        reply_markup=InlineKeyboardMarkup(kb)
+    )
+
+async def register_confirm(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    member_id = int(q.data.split(":")[1])
+    tg_id     = q.from_user.id
+    set_member_tg_id(member_id, tg_id)
+    members   = get_members()
+    name      = next((m["name"] for m in members if m["id"] == member_id), "")
+    await q.message.reply_text(f"✅ {name} ثبت شد. از این به بعد نوتیف‌ها برات می‌آد.")
 
 # ── مراحل مکالمه ──
 ASK_TITLE, ASK_MEMBER, ASK_PHASE, ASK_STATUS, ASK_DEADLINE = range(5)
@@ -240,6 +277,9 @@ async def add_got_deadline(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"✅ تسک #{task_id} با موفقیت اضافه شد!\n\n*{ctx.user_data['new_title']}*",
         parse_mode="Markdown"
     )
+    await notify_all(ctx,
+        f"➕ *تسک جدید اضافه شد*\n\n📌 {ctx.user_data['new_title']}",
+        exclude_id=update.effective_user.id)
     ctx.user_data.clear()
     return ConversationHandler.END
 
@@ -328,11 +368,24 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await show_task_list(update, ctx, member_id=member_id, title=mb_name)
     elif data.startswith("setstatus:"):
         _, task_id, new_sid = data.split(":")
-        update_task_status(int(task_id), int(new_sid))
-        await show_task_detail(update, ctx, int(task_id))
+        task_id_int = int(task_id)
+        new_sid_int = int(new_sid)
+        update_task_status(task_id_int, new_sid_int)
+        t, _ = get_task(task_id_int)
+        statuses = get_statuses()
+        s_label = next((f"{s['emoji']} {s['name']}" for s in statuses if s["id"] == new_sid_int), "")
+        await notify_all(ctx,
+            f"🔄 *تغییر وضعیت تسک*\n\n📌 {t['title']}\nوضعیت جدید: {s_label}",
+            exclude_id=update.effective_user.id)
+        await show_task_detail(update, ctx, task_id_int)
     elif data.startswith("deltask:"):
         task_id = int(data.split(":")[1])
+        t, _ = get_task(task_id)
+        title = t["title"] if t else f"#{task_id}"
         delete_task(task_id)
+        await notify_all(ctx,
+            f"🗑 *تسک حذف شد*\n\n📌 {title}",
+            exclude_id=update.effective_user.id)
         await _send_or_edit(update, "🗑 تسک حذف شد.", [
             [InlineKeyboardButton("🏠 منوی اصلی", callback_data="menu:main")]
         ])
@@ -385,6 +438,8 @@ def main():
     )
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("register", register_cmd))
+    app.add_handler(CallbackQueryHandler(register_confirm, pattern="^reg:"))
     app.add_handler(add_conv)
     app.add_handler(notes_conv)
     app.add_handler(doc_conv)
