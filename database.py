@@ -1,17 +1,51 @@
 """
-database.py — راه‌اندازی SQLite و توابع CRUD
+database.py — راه‌اندازی دیتابیس (Turso / SQLite) و توابع CRUD
+اگه TURSO_URL و TURSO_TOKEN ست باشن از Turso استفاده می‌کنه،
+وگرنه SQLite محلی.
 """
-import sqlite3
+import os
 from datetime import datetime
 
-DB_PATH = "ev_project.db"
+TURSO_URL   = os.getenv("TURSO_URL")
+TURSO_TOKEN = os.getenv("TURSO_TOKEN")
+DB_PATH     = "ev_project.db"
 
 
 def get_conn():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
+    if TURSO_URL and TURSO_TOKEN:
+        import libsql_experimental as libsql
+        conn = libsql.connect(DB_PATH, sync_url=TURSO_URL, auth_token=TURSO_TOKEN)
+        conn.sync()
+    else:
+        import sqlite3
+        conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = lambda cur, row: _DictRow(cur, row)
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
+
+
+class _DictRow:
+    """شبیه sqlite3.Row — هم با index هم با key قابل دسترسیه."""
+    def __init__(self, cursor, row):
+        self._data = row
+        self._keys = [d[0] for d in cursor.description]
+
+    def __getitem__(self, key):
+        if isinstance(key, int):
+            return self._data[key]
+        return self._data[self._keys.index(key)]
+
+    def __iter__(self):
+        return iter(self._data)
+
+    def keys(self):
+        return self._keys
+
+    def get(self, key, default=None):
+        try:
+            return self[key]
+        except (ValueError, IndexError):
+            return default
 
 
 def init_db():
