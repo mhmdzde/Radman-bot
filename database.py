@@ -71,11 +71,10 @@ class _TursoCursor:
         return rows
 
     def execute(self, sql, params=()):
-        self._cur.execute(sql, params)
+        self._cur.execute(sql, tuple(params))
         return self
 
     def executescript(self, sql):
-        # libsql executescript رو روی cursor نداره، از connection استفاده می‌کنیم
         for stmt in sql.split(";"):
             stmt = stmt.strip()
             if stmt:
@@ -83,7 +82,7 @@ class _TursoCursor:
         return self
 
     def executemany(self, sql, seq):
-        self._cur.executemany(sql, seq)
+        self._cur.executemany(sql, [tuple(r) for r in seq])
         return self
 
     def fetchone(self):
@@ -97,6 +96,18 @@ class _TursoCursor:
         rows = self._cur.fetchall()
         desc = self._cur.description
         return [_DictRow(desc, r) for r in rows] if desc else rows
+
+    def __iter__(self):
+        desc = self._cur.description
+        for row in self._cur.fetchall():
+            yield _DictRow(desc, row) if desc else row
+
+    def __next__(self):
+        row = self._cur.fetchone()
+        if row is None:
+            raise StopIteration
+        desc = self._cur.description
+        return _DictRow(desc, row) if desc else row
 
 
 class _TursoConn:
