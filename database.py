@@ -148,6 +148,10 @@ def init_db():
                     c.execute("INSERT INTO task_members VALUES (?,?)", (task_id, mid))
 
     conn.commit()
+
+    # ── جداول مالی ──
+    init_finance(conn)
+
     conn.close()
 
 
@@ -322,5 +326,111 @@ def update_task_doc(task_id, doc_link):
 def delete_task(task_id):
     conn = get_conn()
     conn.execute("DELETE FROM tasks WHERE id=?", (task_id,))
+    conn.commit()
+    conn.close()
+
+# ─── جدول مالی ──────────────────────────────────────────────────
+
+def init_finance(conn=None):
+    """
+    جداول مالی رو می‌سازه. conn اختیاریه؛ اگه نباشه خودش باز می‌کنه.
+    """
+    close_after = conn is None
+    if conn is None:
+        conn = get_conn()
+    conn.executescript("""
+    CREATE TABLE IF NOT EXISTS departments (
+        id    INTEGER PRIMARY KEY,
+        name  TEXT NOT NULL UNIQUE
+    );
+
+    CREATE TABLE IF NOT EXISTS transactions (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        type        TEXT NOT NULL CHECK(type IN ('income','expense')),
+        amount      REAL NOT NULL,
+        description TEXT NOT NULL,
+        dept_id     INTEGER REFERENCES departments(id),   -- NULL برای درآمد یا هزینه عمومی
+        date        TEXT NOT NULL DEFAULT (date('now','localtime')),
+        created_at  TEXT DEFAULT (datetime('now','localtime'))
+    );
+    """)
+    # بخش‌های پیش‌فرض
+    conn.execute("INSERT OR IGNORE INTO departments (id,name) VALUES (1,'فنی')")
+    conn.execute("INSERT OR IGNORE INTO departments (id,name) VALUES (2,'بازرگانی')")
+    conn.execute("INSERT OR IGNORE INTO departments (id,name) VALUES (3,'اجرایی')")
+    conn.commit()
+    if close_after:
+        conn.close()
+
+
+def add_transaction(type_: str, amount: float, description: str, dept_id=None, date=None):
+    """type_: 'income' یا 'expense'"""
+    conn = get_conn()
+    conn.execute(
+        "INSERT INTO transactions (type, amount, description, dept_id, date) VALUES (?,?,?,?,COALESCE(?,date('now','localtime')))",
+        (type_, amount, description, dept_id, date)
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_balance():
+    """موجودی کل = جمع درآمد - جمع هزینه"""
+    conn = get_conn()
+    income  = conn.execute("SELECT COALESCE(SUM(amount),0) FROM transactions WHERE type='income'").fetchone()[0]
+    expense = conn.execute("SELECT COALESCE(SUM(amount),0) FROM transactions WHERE type='expense'").fetchone()[0]
+    conn.close()
+    return income, expense, income - expense
+
+
+def get_transactions(type_=None, dept_id=None, date_from=None, date_to=None):
+    conn = get_conn()
+    q = """
+        SELECT t.id, t.type, t.amount, t.description, t.date,
+               COALESCE(d.name,'—') AS dept_name
+        FROM transactions t
+        LEFT JOIN departments d ON t.dept_id=d.id
+        WHERE 1=1
+    """
+    params = []
+    if type_:
+        q += " AND t.type=?"; params.append(type_)
+    if dept_id:
+        q += " AND t.dept_id=?"; params.append(dept_id)
+    if date_from:
+        q += " AND t.date>=?"; params.append(date_from)
+    if date_to:
+        q += " AND t.date<=?"; params.append(date_to)
+    q += " ORDER BY t.date DESC, t.id DESC"
+    rows = conn.execute(q, params).fetchall()
+    conn.close()
+    return rows
+
+
+def get_dept_budget():
+    """هزینه تجمیع‌شده به تفکیک بخش"""
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT d.id, d.name,
+               COALESCE(SUM(CASE WHEN t.type='expense' THEN t.amount ELSE 0 END),0) AS spent,
+               COALESCE(SUM(CASE WHEN t.type='income'  THEN t.amount ELSE 0 END),0) AS income
+        FROM departments d
+        LEFT JOIN transactions t ON t.dept_id=d.id
+        GROUP BY d.id ORDER BY d.id
+    """).fetchall()
+    conn.close()
+    return rows
+
+
+def get_departments():
+    conn = get_conn()
+    rows = conn.execute("SELECT * FROM departments ORDER BY id").fetchall()
+    conn.close()
+    return rows
+
+
+def delete_transaction(tx_id):
+    conn = get_conn()
+    conn.execute("DELETE FROM transactions WHERE id=?", (tx_id,))
     conn.commit()
     conn.close()

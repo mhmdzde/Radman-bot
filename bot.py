@@ -11,6 +11,7 @@ from database import (
     get_statuses, get_dashboard, update_task_status, add_task,
     update_task_notes, update_task_doc, delete_task
 )
+from finance_bot import finance_menu, finance_button_handler, get_finance_conversations
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -47,6 +48,7 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("فیلتر بر اساس فاز", callback_data="menu:filter:phase")],
         [InlineKeyboardButton("فیلتر بر اساس فرد", callback_data="menu:filter:member")],
         [InlineKeyboardButton("➕ افزودن تسک",      callback_data="menu:add")],
+        [InlineKeyboardButton("💼 بخش مالی",        callback_data="fin:menu")],
     ]
     await _send_or_edit(update, "🔋 *پروژه توسعه زیرساخت شارژ خودروی برقی*\n\nیک گزینه انتخاب کنید:", kb)
 
@@ -294,6 +296,11 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await q.answer()
     data = q.data
 
+    # ── بخش مالی ──
+    if data.startswith("fin:"):
+        if await finance_button_handler(update, ctx):
+            return
+
     if data == "menu:main":
         await start(update, ctx)
     elif data == "menu:dashboard":
@@ -381,6 +388,8 @@ def main():
     app.add_handler(add_conv)
     app.add_handler(notes_conv)
     app.add_handler(doc_conv)
+    for fin_conv in get_finance_conversations():
+        app.add_handler(fin_conv)
     app.add_handler(CallbackQueryHandler(button_handler))
 
     print("🤖 بات در حال اجراست...")
