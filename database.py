@@ -565,3 +565,22 @@ def delete_transaction(tx_id):
     conn.execute("DELETE FROM transactions WHERE id=?", (tx_id,))
     conn.commit()
     conn.close()
+
+
+# ─── نوتیفیکیشن ─────────────────────────────────────────────────
+
+def get_notify_ids():
+    """تمام tg_id های اعضایی که عدد معتبر دارن."""
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT tg_id FROM members WHERE tg_id IS NOT NULL"
+    ).fetchall()
+    conn.close()
+    return [r["tg_id"] for r in rows]
+
+
+def set_member_tg_id(member_id: int, tg_id: int):
+    conn = get_conn()
+    conn.execute("UPDATE members SET tg_id=? WHERE id=?", (tg_id, member_id))
+    conn.commit()
+    conn.close()
