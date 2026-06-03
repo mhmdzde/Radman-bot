@@ -14,21 +14,22 @@ DB_PATH     = "ev_project.db"
 def get_conn():
     if TURSO_URL and TURSO_TOKEN:
         import libsql_experimental as libsql
-        conn = libsql.connect(DB_PATH, sync_url=TURSO_URL, auth_token=TURSO_TOKEN)
-        conn.sync()
+        raw = libsql.connect(DB_PATH, sync_url=TURSO_URL, auth_token=TURSO_TOKEN)
+        raw.sync()
+        conn = _TursoConn(raw)
     else:
         import sqlite3
         conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = lambda cur, row: _DictRow(cur, row)
+        conn.row_factory = lambda cur, row: _DictRow(cur.description, row)
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
 
 class _DictRow:
     """شبیه sqlite3.Row — هم با index هم با key قابل دسترسیه."""
-    def __init__(self, cursor, row):
+    def __init__(self, description, row):
         self._data = row
-        self._keys = [d[0] for d in cursor.description]
+        self._keys = [d[0] for d in description]
 
     def __getitem__(self, key):
         if isinstance(key, int):
@@ -46,6 +47,91 @@ class _DictRow:
             return self[key]
         except (ValueError, IndexError):
             return default
+
+
+class _TursoCursor:
+    """Cursor wrapper که rows رو به _DictRow تبدیل می‌کنه."""
+    def __init__(self, cur):
+        self._cur = cur
+
+    @property
+    def description(self):
+        return self._cur.description
+
+    @property
+    def lastrowid(self):
+        return self._cur.lastrowid
+
+    def _wrap(self, rows):
+        if rows is None:
+            return None
+        desc = self._cur.description
+        if desc:
+            return [_DictRow(desc, r) for r in rows]
+        return rows
+
+    def execute(self, sql, params=()):
+        self._cur.execute(sql, params)
+        return self
+
+    def executescript(self, sql):
+        # libsql executescript رو روی cursor نداره، از connection استفاده می‌کنیم
+        for stmt in sql.split(";"):
+            stmt = stmt.strip()
+            if stmt:
+                self._cur.execute(stmt)
+        return self
+
+    def executemany(self, sql, seq):
+        self._cur.executemany(sql, seq)
+        return self
+
+    def fetchone(self):
+        row = self._cur.fetchone()
+        if row is None:
+            return None
+        desc = self._cur.description
+        return _DictRow(desc, row) if desc else row
+
+    def fetchall(self):
+        rows = self._cur.fetchall()
+        desc = self._cur.description
+        return [_DictRow(desc, r) for r in rows] if desc else rows
+
+
+class _TursoConn:
+    """Connection wrapper برای libsql که رفتار sqlite3 رو شبیه‌سازی می‌کنه."""
+    def __init__(self, conn):
+        self._conn = conn
+
+    def cursor(self):
+        return _TursoCursor(self._conn.cursor())
+
+    def execute(self, sql, params=()):
+        cur = _TursoCursor(self._conn.cursor())
+        cur.execute(sql, params)
+        return cur
+
+    def executemany(self, sql, seq):
+        cur = _TursoCursor(self._conn.cursor())
+        cur.executemany(sql, seq)
+        return cur
+
+    def executescript(self, sql):
+        cur = self.cursor()
+        cur.executescript(sql)
+        return cur
+
+    def commit(self):
+        self._conn.commit()
+        if TURSO_URL and TURSO_TOKEN:
+            try:
+                self._conn.sync()
+            except Exception:
+                pass
+
+    def close(self):
+        self._conn.close()
 
 
 def init_db():
