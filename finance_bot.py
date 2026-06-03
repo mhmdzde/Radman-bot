@@ -10,8 +10,20 @@ from telegram.ext import (
 )
 from database import (
     add_transaction, get_balance, get_transactions,
-    get_dept_budget, get_departments, delete_transaction
+    get_dept_budget, get_departments, delete_transaction,
+    get_notify_ids
 )
+import logging
+_logger = logging.getLogger(__name__)
+
+async def _notify_all(ctx, text: str, exclude_id: int = None):
+    for tg_id in get_notify_ids():
+        if exclude_id and tg_id == exclude_id:
+            continue
+        try:
+            await ctx.bot.send_message(chat_id=tg_id, text=text, parse_mode="Markdown")
+        except Exception as e:
+            _logger.warning(f"fin notify failed for {tg_id}: {e}")
 
 # ── مراحل مکالمه ──
 FIN_TYPE, FIN_AMOUNT, FIN_DESC, FIN_DEPT, FIN_DATE = range(10, 15)
@@ -192,11 +204,17 @@ async def add_tx_date(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         dept_id=ctx.user_data["fin_dept"],
         date=date,
     )
-    label = "درآمد" if tx_type == "income" else "هزینه"
+    label  = "درآمد" if tx_type == "income" else "هزینه"
+    emoji  = "📥" if tx_type == "income" else "📤"
+    amount = ctx.user_data['fin_amount']
+    desc   = ctx.user_data['fin_desc']
     await update.message.reply_text(
-        f"✅ {label} `{ctx.user_data['fin_amount']:,.0f}` تومان با موفقیت ثبت شد.",
+        f"✅ {label} `{amount:,.0f}` تومان با موفقیت ثبت شد.",
         parse_mode="Markdown"
     )
+    await _notify_all(ctx,
+        f"{emoji} *{label} جدید ثبت شد*\n\n💰 مبلغ: `{amount:,.0f}` تومان\n📝 علت: {desc}",
+        exclude_id=update.effective_user.id)
     ctx.user_data.clear()
     return ConversationHandler.END
 
