@@ -16,7 +16,7 @@ from finance_bot import finance_menu, finance_button_handler, get_finance_conver
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-TOKEN = os.getenv("BOT_TOKEN", "6819753947:AAHa366GI99NYAqsm6L271UqQlYdw9Y8y8Q")
+TOKEN = os.getenv("BOT_TOKEN", "TBOT")
 
 # ════════════════════════════════════════════════════════════════
 # نوتیفیکیشن
